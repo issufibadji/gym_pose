@@ -13,7 +13,10 @@ MODEL_URLS = {
 
 def main():
     parser = argparse.ArgumentParser(description="Process video with MoveNet")
-    parser.add_argument("--video", type=str, help="Path to input video")
+    parser.add_argument(
+        "--video", type=str, default=None,
+        help="Path to input video (download sample if omitted or unreadable)"
+    )
     parser.add_argument("--model", choices=list(MODEL_URLS), default="lightning")
     parser.add_argument("--input-size", type=int, default=192)
     parser.add_argument("--conf-thr", type=float, default=0.3)
@@ -31,7 +34,12 @@ def main():
         args.video = download_sample(args.out)
 
     movenet = hub.load(MODEL_URLS[args.model])
-    fps, frames = read_video(args.video)
+    try:
+        fps, frames = read_video(args.video)
+    except IOError:
+        print(f"Failed to open {args.video}, downloading sample", file=sys.stderr)
+        args.video = download_sample(args.out)
+        fps, frames = read_video(args.video)
 
     os.makedirs(args.out, exist_ok=True)
     detector = SimpleGestureDetector(conf_thr=args.conf_thr)

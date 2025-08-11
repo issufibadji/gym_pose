@@ -24,8 +24,11 @@ python -m venv .venv
 # Linux/Mac
 source .venv/bin/activate
 pip install -r requirements.txt
+# forneça --video ou deixe vazio para baixar um exemplo
 python scripts/run_video.py --video path/to/video.mp4 --model lightning --out out/ --events
 ```
+
+Se `--video` for omitido ou o caminho não puder ser aberto, o script baixa um vídeo de amostra automaticamente.
 
 Notas:
 - FFmpeg é requerido para `imageio-ffmpeg`.
