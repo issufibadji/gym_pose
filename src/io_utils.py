@@ -4,9 +4,12 @@ import cv2
 import imageio
 import numpy as np
 from urllib.request import urlretrieve
+from urllib.error import URLError, HTTPError
 
 
-SAMPLE_URL = "https://storage.googleapis.com/download.tensorflow.org/data/squat.mp4"
+SAMPLE_URL = (
+    "https://github.com/google/mediapipe/raw/master/mediapipe/python/examples/holistic/holistic_tracking_a.mp4"
+)
 
 
 def read_video(path: str):
@@ -40,5 +43,8 @@ def download_sample(out_dir: str) -> str:
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "sample.mp4")
     if not os.path.exists(out_path):
-        urlretrieve(SAMPLE_URL, out_path)
+        try:
+            urlretrieve(SAMPLE_URL, out_path)
+        except (URLError, HTTPError) as e:
+            raise IOError(f"Failed to download sample video: {SAMPLE_URL}") from e
     return out_path

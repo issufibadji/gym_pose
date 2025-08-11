@@ -31,15 +31,23 @@ def main():
     from src.gestures import SimpleGestureDetector
 
     if args.video is None:
-        args.video = download_sample(args.out)
+        try:
+            args.video = download_sample(args.out)
+        except IOError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
 
     movenet = hub.load(MODEL_URLS[args.model])
     try:
         fps, frames = read_video(args.video)
     except IOError:
         print(f"Failed to open {args.video}, downloading sample", file=sys.stderr)
-        args.video = download_sample(args.out)
-        fps, frames = read_video(args.video)
+        try:
+            args.video = download_sample(args.out)
+            fps, frames = read_video(args.video)
+        except IOError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
 
     os.makedirs(args.out, exist_ok=True)
     detector = SimpleGestureDetector(conf_thr=args.conf_thr)
