@@ -1,0 +1,8 @@
+tensorflow==2.19.0
+tensorflow-hub==0.16.1
+opencv-python
+numpy
+imageio
+imageio-ffmpeg
+dtaidistance
+matplotlib>=3.9
