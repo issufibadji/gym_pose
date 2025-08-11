@@ -8,7 +8,7 @@ from urllib.error import URLError, HTTPError
 
 
 SAMPLE_URL = (
-    "https://github.com/google/mediapipe/raw/master/mediapipe/python/examples/holistic/holistic_tracking_a.mp4"
+    "https://github.com/tensorflow/tfjs-models/raw/master/pose-detection/assets/dance_input.gif"
 )
 
 

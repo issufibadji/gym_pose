@@ -3,13 +3,14 @@ import argparse
 import os
 import csv
 import sys
+
+# permitir imports de src/*
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 MODEL_URLS = {
     "lightning": "https://tfhub.dev/google/movenet/singlepose/lightning/4",
-    "thunder": "https://tfhub.dev/google/movenet/singlepose/thunder/4",
+    "thunder":   "https://tfhub.dev/google/movenet/singlepose/thunder/4",
 }
-
 
 def main():
     parser = argparse.ArgumentParser(description="Process video with MoveNet")
@@ -24,20 +25,19 @@ def main():
     parser.add_argument("--out", type=str, default="out")
     args = parser.parse_args()
 
-    import tensorflow as tf  # noqa: F401
-    import tensorflow_hub as hub
-    from src.movenet_infer import run_movenet, draw_skeleton
+    # Imports locais (evita custo quando apenas imprime --help)
+    from src.movenet_infer import load_movenet, run_movenet, draw_skeleton
     from src.io_utils import read_video, save_video, download_sample
     from src.gestures import SimpleGestureDetector
 
-    if args.video is None:
+    # Resolve vídeo: usa o fornecido ou baixa um sample
+    if not args.video:
         try:
             args.video = download_sample(args.out)
         except IOError as e:
             print(e, file=sys.stderr)
             sys.exit(1)
 
-    movenet = hub.load(MODEL_URLS[args.model])
     try:
         fps, frames = read_video(args.video)
     except IOError:
@@ -50,28 +50,40 @@ def main():
             sys.exit(1)
 
     os.makedirs(args.out, exist_ok=True)
+
+    # >>> CORREÇÃO PRINCIPAL: usar função de inferência prontos das signatures
+    infer_fn = load_movenet(args.model)
+
     detector = SimpleGestureDetector(conf_thr=args.conf_thr)
-    out_frames = []
-    events = []
+    out_frames, events = [], []
+    prev_flags = {}
 
-    for i, frame in enumerate(frames):
-        kpts = run_movenet(movenet, frame, input_size=args.input_size)[0, 0]
-        out_frames.append(draw_skeleton(frame, kpts, conf_thr=args.conf_thr))
+    for i, frame_rgb in enumerate(frames):
+        # run_movenet retorna [1,1,17,3] (y,x,score)
+        kpts = run_movenet(infer_fn, frame_rgb, input_size=args.input_size)
+
+        # desenha overlay (aceita [1,1,17,3])
+        out_frames.append(draw_skeleton(frame_rgb, kpts, conf_thr=args.conf_thr))
+
+        # eventos opcionais
         if args.events:
-            ev = detector.update(kpts)
+            ev = detector.update(kpts[0, 0])  # detector espera [1,1,17,3]
+            # loga borda de subida (rising edge)
             for name, flag in ev.items():
-                if flag:
+                if flag and not prev_flags.get(name, False):
                     events.append({"t_sec": i / fps, "event": name})
+            prev_flags = ev
 
+    # salva resultados
     save_video(os.path.join(args.out, "pose_overlay.mp4"), out_frames, fps)
+
     if args.events and events:
         with open(os.path.join(args.out, "events.csv"), "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["t_sec", "event"])
             writer.writeheader()
             writer.writerows(events)
 
-    print("Saved results to", args.out)
-
+    print("Saved results to", os.path.abspath(args.out))
 
 if __name__ == "__main__":
     main()

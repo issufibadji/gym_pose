@@ -1,77 +1,83 @@
-"""Simple gesture detector for MoveNet keypoints."""
 from collections import deque
 import numpy as np
 
+def _as_17x3(arr):
+    """Normaliza kpts para shape (17,3) [y,x,score]. Aceita:
+    (17,3), (1,17,3), (1,1,17,3)."""
+    a = np.asarray(arr)
+    if a.shape == (17, 3):
+        return a
+    if a.ndim == 3 and a.shape[0] == 1 and a.shape[1] == 17 and a.shape[2] == 3:
+        return a[0]
+    if a.ndim == 4 and a.shape[0] == 1 and a.shape[1] == 1 and a.shape[2] == 17 and a.shape[3] == 3:
+        return a[0, 0]
+    raise ValueError(f"Keypoints com shape inesperado: {a.shape}")
+
+def _angle_xy(A, B, C):
+    # recebe pontos em (x,y)
+    BA = A - B
+    BC = C - B
+    denom = (np.linalg.norm(BA) * np.linalg.norm(BC) + 1e-6)
+    cosang = np.dot(BA, BC) / denom
+    cosang = np.clip(cosang, -1.0, 1.0)
+    return np.degrees(np.arccos(cosang))
 
 class SimpleGestureDetector:
-    """Detects basic gestures using heuristic rules."""
-
-    def __init__(self, smooth: int = 5, conf_thr: float = 0.3):
-        self.buffer = deque(maxlen=smooth)
+    def __init__(self, smooth=5, conf_thr=0.3):
+        self.q = deque(maxlen=smooth)  # guarda (y,x) normalizados
+        self.hips_baseline = None
         self.conf_thr = conf_thr
-        self.baseline_hip = None
-        self.arm_state = False
-        self.squat_state = False
-        self.sit_state = False
 
-    @staticmethod
-    def _angle(a, b, c):
-        """Returns angle ABC in degrees."""
-        ba = a - b
-        bc = c - b
-        cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
-        return np.degrees(np.arccos(np.clip(cos, -1.0, 1.0)))
+    def update(self, kpts_any_shape):
+        kp = _as_17x3(kpts_any_shape)         # (17,3) [y,x,score]
+        conf = kp[:, 2]
+        yx = kp[:, :2]                        # (y,x) em [0..1]
+        self.q.append(yx)
 
-    def update(self, kpts: np.ndarray):
-        """Update detector with new keypoints.
+        avg = np.mean(np.stack(self.q), axis=0)  # (17,2) [y,x]
 
-        Args:
-            kpts: Array (17,3) of keypoints (y,x,score).
+        def ok(i): return conf[i] > self.conf_thr
+        def y(i): return avg[i, 0]
+        def x(i): return avg[i, 1]
 
-        Returns:
-            Dict with booleans for events: arm_raise, squat, sit_down.
-        """
-        self.buffer.append(kpts)
-        avg = np.mean(self.buffer, axis=0)
-        events = {"arm_raise": False, "squat": False, "sit_down": False}
+        L_SH, R_SH = 5, 6
+        L_WR, R_WR = 9, 10
+        L_HIP, R_HIP = 11, 12
+        L_KNE, R_KNE = 13, 14
+        L_ANK, R_ANK = 15, 16
 
-        lw, rw = avg[9], avg[10]
-        ls, rs = avg[5], avg[6]
-        lh, rh = avg[11], avg[12]
-        lk, rk = avg[13], avg[14]
-        la, ra = avg[15], avg[16]
+        # baseline do quadril após encher o buffer
+        if self.hips_baseline is None and len(self.q) == self.q.maxlen:
+            self.hips_baseline = (y(L_HIP) + y(R_HIP)) / 2
 
-        if self.baseline_hip is None:
-            self.baseline_hip = (lh[0] + rh[0]) / 2
+        # braço levantado: punho acima do ombro (y menor)
+        arm_up = False
+        for wr, sh in [(L_WR, L_SH), (R_WR, R_SH)]:
+            if ok(wr) and ok(sh) and y(wr) < y(sh) - 0.05:
+                arm_up = True
 
-        # Arm raise
-        arm_condition = False
-        if lw[2] > self.conf_thr and ls[2] > self.conf_thr and lw[0] < ls[0] - 0.05:
-            arm_condition = True
-        if rw[2] > self.conf_thr and rs[2] > self.conf_thr and rw[0] < rs[0] - 0.05:
-            arm_condition = True
-        if arm_condition and not self.arm_state:
-            events["arm_raise"] = True
-        self.arm_state = arm_condition
+        squat = False
+        sit_down = False
 
-        # Squat
-        angles = []
-        if all(p[2] > self.conf_thr for p in [lh, lk, la]):
-            angles.append(self._angle(lh[:2], lk[:2], la[:2]))
-        if all(p[2] > self.conf_thr for p in [rh, rk, ra]):
-            angles.append(self._angle(rh[:2], rk[:2], ra[:2]))
-        hip_y = (lh[0] + rh[0]) / 2
-        hip_drop = hip_y - self.baseline_hip
-        squat_condition = angles and np.mean(angles) < 100 and hip_drop > 0.06
-        if squat_condition and not self.squat_state:
-            events["squat"] = True
-        self.squat_state = squat_condition
+        need = [L_HIP, R_HIP, L_KNE, R_KNE, L_ANK, R_ANK]
+        if all(ok(i) for i in need):
+            # converter (y,x) -> (x,y) p/ cálculo do ângulo
+            A = avg[[L_HIP, L_KNE, L_ANK]][:, ::-1]
+            B = avg[[R_HIP, R_KNE, R_ANK]][:, ::-1]
+            la = _angle_xy(A[0], A[1], A[2])  # ângulo joelho esq
+            ra = _angle_xy(B[0], B[1], B[2])  # ângulo joelho dir
 
-        # Sit down
-        hip_var = np.var([f[11:13, 0].mean() for f in self.buffer]) if len(self.buffer) == self.buffer.maxlen else np.inf
-        sit_condition = angles and 80 < np.mean(angles) < 100 and hip_drop > 0.2 and hip_var < 1e-4
-        if sit_condition and not self.sit_state:
-            events["sit_down"] = True
-        self.sit_state = sit_condition
+            mid_hip = (y(L_HIP) + y(R_HIP)) / 2
+            base = self.hips_baseline if self.hips_baseline is not None else mid_hip
+            depth = (mid_hip - base)  # positivo quando desce
 
-        return events
+            # Agachamento: joelhos fecham + quadril desce
+            if la < 100 and ra < 100 and depth > 0.06:
+                squat = True
+
+            # Senta: joelhos ~90 e quadril estável
+            ys = [fr[[L_HIP, R_HIP], 0].mean() for fr in self.q]
+            if len(ys) == self.q.maxlen and 70 <= la <= 110 and 70 <= ra <= 110 and np.std(ys) < 0.005:
+                sit_down = True
+
+        return {"arm_raise": arm_up, "squat": squat, "sit_down": sit_down}
